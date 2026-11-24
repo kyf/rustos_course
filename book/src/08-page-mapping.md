@@ -63,7 +63,7 @@ Virtual Page 0x4000_0000 -> Physical Frame 0x0200_0000
 
 **来源标记：按历史课程中的 Mapper / map_to / flush 讨论重构，API 对齐 x86_64 0.15.5。**
 
-\`\`\`rust
+```rust
 use x86_64::VirtAddr;
 use x86_64::structures::paging::{
     Mapper,
@@ -99,7 +99,7 @@ pub unsafe fn map_4k(
 
     Ok(())
 }
-\`\`\`
+```
 
 ### 为什么 map_to 需要 FrameAllocator 参数？
 
@@ -109,7 +109,7 @@ pub unsafe fn map_4k(
 
 ### 代码演示：解除映射，但暂不释放物理页帧
 
-\`\`\`rust
+```rust
 use x86_64::structures::paging::{
     Mapper, OffsetPageTable, Page, PhysFrame, Size4KiB,
 };
@@ -127,13 +127,13 @@ pub fn unmap_4k(
     // 返回物理页帧，由更上层根据所有权决定是否释放。
     Ok(frame)
 }
-\`\`\`
+```
 
-\`unmap\` 只移除映射并返回原物理页帧；它不会自动释放数据页帧，也不会自动释放所有变空的中间页表页。拿到返回值后，只有确认该帧不再被其他虚拟地址或进程共享，才可以调用页帧分配器的 unsafe 回收接口。
+`unmap` 只移除映射并返回原物理页帧；它不会自动释放数据页帧，也不会自动释放所有变空的中间页表页。拿到返回值后，只有确认该帧不再被其他虚拟地址或进程共享，才可以调用页帧分配器的 unsafe 回收接口。
 
 ### 这段代码中的 unsafe 代表什么
 
-\`map_to\` 是 unsafe API，因为错误映射可能让两个逻辑对象别名到同一块可变物理内存，或让正在使用的虚拟页突然指向另一块物理内存。它不是“调用了 unsafe 就安全”，而是要求调用者先证明映射关系不会破坏内存安全。
+`map_to` 是 unsafe API，因为错误映射可能让两个逻辑对象别名到同一块可变物理内存，或让正在使用的虚拟页突然指向另一块物理内存。它不是“调用了 unsafe 就安全”，而是要求调用者先证明映射关系不会破坏内存安全。
 
 ### 建议的调试输出
 
@@ -144,4 +144,4 @@ pub fn unmap_4k(
 - PageTableFlags；
 - flush 前后的访问结果。
 
-映射失败时区分 \`PageAlreadyMapped\` 和 \`FrameAllocationFailed\` 等错误。不要把所有错误都归类成“内存不足”。
+映射失败时区分 `PageAlreadyMapped` 和 `FrameAllocationFailed` 等错误。不要把所有错误都归类成“内存不足”。

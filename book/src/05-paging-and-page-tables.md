@@ -147,7 +147,7 @@ let target_virtual_addr = VirtAddr::new((free_p4_index as u64) << 39);
 
 **来源标记：按历史课堂中“查看 Bootloader 建立的页表”的讨论重构。** 使用下面的代码之前，必须已经启用物理内存直接映射，并确认偏移值正确。
 
-\`\`\`rust
+```rust
 use x86_64::{
     registers::control::Cr3,
     structures::paging::{OffsetPageTable, PageTable},
@@ -185,21 +185,21 @@ unsafe fn init_offset_page_table(
     // SAFETY: level_4_table 是当前有效 PML4，offset 是正确的直接映射偏移。
     unsafe { OffsetPageTable::new(level_4_table, physical_memory_offset) }
 }
-\`\`\`
+```
 
 ### 逐步理解
 
-1. \`Cr3::read()\` 返回当前 PML4 的物理页帧和 CR3 标志位。CR3 中存放的是物理页表根，不是 Rust 虚拟指针。
-2. \`start_address()\` 取得 PML4 页帧的物理起始地址。
-3. \`physical_memory_offset + physical_address\` 通过 Bootloader 建立的直接映射找到同一块页表内存的虚拟地址。
-4. \`as_mut_ptr::<PageTable>()\` 只是把数值解释为指针，并不负责创建映射。
-5. \`OffsetPageTable::new\` 创建的是内核侧 Mapper 抽象；硬件页表格式没有因为创建这个 Rust 对象而改变。
+1. `Cr3::read()` 返回当前 PML4 的物理页帧和 CR3 标志位。CR3 中存放的是物理页表根，不是 Rust 虚拟指针。
+2. `start_address()` 取得 PML4 页帧的物理起始地址。
+3. `physical_memory_offset + physical_address` 通过 Bootloader 建立的直接映射找到同一块页表内存的虚拟地址。
+4. `as_mut_ptr::<PageTable>()` 只是把数值解释为指针，并不负责创建映射。
+5. `OffsetPageTable::new` 创建的是内核侧 Mapper 抽象；硬件页表格式没有因为创建这个 Rust 对象而改变。
 
-\`'static mut\` 在这里是教学内核常见的简化方式，但它要求非常严格：不能反复调用函数制造多个指向同一 PML4 的可变引用。正式内核应由内存管理器统一持有 Mapper，并通过受控借用暴露操作接口。
+`'static mut` 在这里是教学内核常见的简化方式，但它要求非常严格：不能反复调用函数制造多个指向同一 PML4 的可变引用。正式内核应由内存管理器统一持有 Mapper，并通过受控借用暴露操作接口。
 
 ## 代码演示：从虚拟地址拆出四级页表索引
 
-\`\`\`rust
+```rust
 use x86_64::VirtAddr;
 
 fn dump_page_table_indexes(raw: u64) {
@@ -214,13 +214,13 @@ fn dump_page_table_indexes(raw: u64) {
     // 在内核中把这些值输出到串口。
     let _ = (p4, p3, p2, p1, offset);
 }
-\`\`\`
+```
 
 以 4 KiB 页面为例，低 12 bit 是页内偏移；之后每 9 bit 分别是 PT、PD、PDPT、PML4 索引。索引范围都是 0 到 511。这个拆分解释了为什么页表每一级有 512 个 Entry。
 
 ## 代码演示：PML4 Entry 对应的 512 GiB 区域起点
 
-\`\`\`rust
+```rust
 use x86_64::VirtAddr;
 
 fn pml4_slot_start(index: u16) -> Option<VirtAddr> {
@@ -231,6 +231,6 @@ fn pml4_slot_start(index: u16) -> Option<VirtAddr> {
     let raw = (index as u64) << 39;
     VirtAddr::try_new(raw).ok()
 }
-\`\`\`
+```
 
 例如 index 为 5 时，左移 39 位得到该 PML4 槽位覆盖区域的低半区起点。注意：高半区槽位需要正确符号扩展，不能把简单左移结果无条件当成 canonical 地址。

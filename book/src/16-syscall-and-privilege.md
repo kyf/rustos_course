@@ -71,7 +71,7 @@ RustOS 后续实现 Ring 3 和系统调用时，建议按以下顺序推进：
 
 **来源标记：新增补充示例。** 下面只展示内核拿到系统调用号和参数后的分发层，不包含尚未实现的汇编入口、MSR 初始化、用户栈切换和返回路径。
 
-\`\`\`rust
+```rust
 #[derive(Debug, Clone, Copy)]
 pub enum SyscallError {
     UnknownSyscall,
@@ -114,7 +114,7 @@ fn sys_write(
     // 后续需要验证用户地址范围并执行 copy_from_user。
     Err(SyscallError::InvalidUserPointer)
 }
-\`\`\`
+```
 
 ### 为什么 sys_write 不能直接解引用参数
 
@@ -122,7 +122,7 @@ fn sys_write(
 
 ### 硬件入口与 Rust 分发层的边界
 
-\`\`\`text
+```text
 Ring 3 执行 syscall
     |
 CPU 根据 IA32_LSTAR 等配置进入 Ring 0
@@ -136,6 +136,6 @@ dispatch_syscall(number, args)
 执行服务并准备返回值
     |
 汇编恢复用户上下文并返回 Ring 3
-\`\`\`
+```
 
-\`SYSCALL\` 会把用户返回 RIP 保存到 RCX，把用户 RFLAGS 保存到 R11；它不会自动保存所有通用寄存器，也不会自动把 RSP 切换到内核栈。当前 RustOS 还没有实现这条完整路径，所以本节分发器是接口设计示例，不是可从 Ring 3 调用的现成功能。
+`SYSCALL` 会把用户返回 RIP 保存到 RCX，把用户 RFLAGS 保存到 R11；它不会自动保存所有通用寄存器，也不会自动把 RSP 切换到内核栈。当前 RustOS 还没有实现这条完整路径，所以本节分发器是接口设计示例，不是可从 Ring 3 调用的现成功能。

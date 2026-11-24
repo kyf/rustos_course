@@ -67,7 +67,7 @@ CR3 是每个逻辑 CPU 上的架构寄存器状态，不是“每个进程有�
 
 **来源标记：新增补充示例，用来把课堂讨论的资源归属具体化。** 这不是已经实现的完整进程管理器。
 
-\`\`\`rust
+```rust
 use x86_64::{
     VirtAddr,
     structures::paging::{PhysFrame, Size4KiB},
@@ -110,13 +110,13 @@ pub struct Process {
     pub id: u64,
     pub address_space: AddressSpaceRoot,
 }
-\`\`\`
+```
 
 ### 为什么这么分层
 
-- \`Process\` 持有地址空间根，代表进程的虚拟内存环境。
-- \`Thread\` 持有自己的用户栈、内核栈和可恢复执行上下文。
-- 同一个进程中的两个线程可以共享同一个 \`AddressSpaceRoot\`，但不能共享同一个执行栈。
+- `Process` 持有地址空间根，代表进程的虚拟内存环境。
+- `Thread` 持有自己的用户栈、内核栈和可恢复执行上下文。
+- 同一个进程中的两个线程可以共享同一个 `AddressSpaceRoot`，但不能共享同一个执行栈。
 - 两个进程通常持有不同的 PML4 根，所以在同一个逻辑 CPU 上切换进程时，通常需要切换 CR3。
 
 ### 为什么切换同进程线程时通常不切换 CR3
