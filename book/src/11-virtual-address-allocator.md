@@ -95,7 +95,7 @@ First Fit 从管理范围起点开始扫描，找到第一个满足长度和对�
 
 **来源标记：按历史第 11 课实现思路重构。** 历史课程明确讨论过 Bitmap、First Fit、连续虚拟页分配、释放，以及 bool 数组和 bitset 的空间差异。下面给出一份可单独测试的实现；实际内核还要把返回的页索引转换为当前 AddressSpace 中的虚拟地址。
 
-\`\`\`rust
+```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FreeError {
     InvalidRange,
@@ -208,21 +208,21 @@ impl<'a> BitmapAllocator<'a> {
         Ok(())
     }
 }
-\`\`\`
+```
 
 ### 逐段讲解
 
 - 一个 bit 代表一个虚拟页是否已被占用；bit 为 1 表示占用，0 表示空闲。
-- \`page / 64\` 找到 bit 所在的 u64；\`page % 64\` 找到这个 u64 中的 bit 位。
-- First Fit 从低页号开始扫描，找到第一段长度满足 \`count\` 且起点满足 \`align_pages\` 的连续空闲区间。
-- \`reserve\` 用于把内核映像、保护页或其他已占用虚拟区间标记为不可分配。
-- \`deallocate\` 先检查整段区间确实全部已占用，再一次性清零，避免发生部分释放。
+- `page / 64` 找到 bit 所在的 u64；`page % 64` 找到这个 u64 中的 bit 位。
+- First Fit 从低页号开始扫描，找到第一段长度满足 `count` 且起点满足 `align_pages` 的连续空闲区间。
+- `reserve` 用于把内核映像、保护页或其他已占用虚拟区间标记为不可分配。
+- `deallocate` 先检查整段区间确实全部已占用，再一次性清零，避免发生部分释放。
 
 ### 课堂中的空间计算
 
 管理 4096 个页面时：
 
-- \`[bool; 4096]\` 通常占 4096 bytes。
+- `[bool; 4096]` 通常占 4096 bytes。
 - bitset 只需 4096 bits，也就是 512 bytes。
 
 所以 bitset 可以把这部分状态元数据减少到原来的八分之一。若 Bitmap 是局部变量，它通常进入当前函数栈帧；若作为分配器字段，则存放位置由分配器实例的存放位置决定。
@@ -231,8 +231,8 @@ impl<'a> BitmapAllocator<'a> {
 
 可在仓库中执行：
 
-\`\`\`bash
+```bash
 cargo test --manifest-path labs/11-bitmap-allocator/Cargo.toml
-\`\`\`
+```
 
 该实验只验证虚拟页区间分配算法，不会修改真实 CPU 页表，也不会分配物理页帧。它与物理页帧分配器、Mapper 是三个不同层次。

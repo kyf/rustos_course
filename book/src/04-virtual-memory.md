@@ -57,7 +57,7 @@ virtual_address = physical_memory_offset + physical_address
 
 **来源标记：按历史课程中的物理内存偏移讨论重构。** 下面的函数只适用于 Bootloader 已经建立物理内存直接映射的地址范围。
 
-\`\`\`rust
+```rust
 use x86_64::{PhysAddr, VirtAddr};
 
 fn phys_to_virt(
@@ -70,18 +70,18 @@ fn phys_to_virt(
 
     VirtAddr::try_new(raw).ok()
 }
-\`\`\`
+```
 
 ### 这段代码做了什么
 
-- \`PhysAddr\` 和 \`VirtAddr\` 是不同类型，避免把两种地址不加区分地当成普通整数。
-- \`checked_add\` 检查加法溢出。
-- \`VirtAddr::try_new\` 检查结果是否符合当前 x86_64 48-bit canonical address 规则。
-- 返回 \`Option<VirtAddr>\`，因为计算失败时不应该继续伪造一个有效地址。
+- `PhysAddr` 和 `VirtAddr` 是不同类型，避免把两种地址不加区分地当成普通整数。
+- `checked_add` 检查加法溢出。
+- `VirtAddr::try_new` 检查结果是否符合当前 x86_64 48-bit canonical address 规则。
+- 返回 `Option<VirtAddr>`，因为计算失败时不应该继续伪造一个有效地址。
 
 如果确认地址有效并且映射存在，才可以在 unsafe 区域通过指针访问：
 
-\`\`\`rust
+```rust
 unsafe fn read_u64_through_direct_map(
     physical_memory_offset: VirtAddr,
     physical_address: PhysAddr,
@@ -93,13 +93,13 @@ unsafe fn read_u64_through_direct_map(
     // 已由直接映射覆盖，地址满足 u64 对齐，并且读取不会与可变访问冲突。
     Some(unsafe { pointer.read_volatile() })
 }
-\`\`\`
+```
 
-这里最重要的不是 \`as_ptr\`，而是调用者承担的安全契约：目标物理页帧必须真的被映射、访问权限必须允许、不能与另一个可变引用形成别名冲突。
+这里最重要的不是 `as_ptr`，而是调用者承担的安全契约：目标物理页帧必须真的被映射、访问权限必须允许、不能与另一个可变引用形成别名冲突。
 
 ### 两个不能混淆的操作
 
-\`\`\`text
+```text
 分配物理页帧：
     FreeListAllocator -> 返回一个 PhysFrame
     不会因此修改页表
@@ -111,6 +111,6 @@ unsafe fn read_u64_through_direct_map(
 映射到一个新的任意虚拟地址：
     Mapper::map_to(...)
     修改页表，并刷新对应 TLB 项
-\`\`\`
+```
 
 所以，分配器返回 Frame 和 Mapper 建立 VA → PA 是两个独立步骤。
