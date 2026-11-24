@@ -57,3 +57,91 @@ Virtual Page 0x4000_0000 -> Physical Frame 0x0200_0000
 ## 本课结论
 
 映射是“页表结构修改 + 物理页帧所有权管理 + TLB 一致性”的组合操作。只改一个 PTE 并不足以构成完整、安全的内存管理接口。
+
+
+## 代码演示：OffsetPageTable 上建立一个 4 KiB 映射
+
+**来源标记：按历史课程中的 Mapper / map_to / flush 讨论重构，API 对齐 x86_64 0.15.5。**
+
+\`\`\`rust
+use x86_64::VirtAddr;
+use x86_64::structures::paging::{
+    Mapper,
+    OffsetPageTable,
+    Page,
+    PageTableFlags,
+    PhysFrame,
+    Size4KiB,
+};
+
+use crate::memory::FreeListFrameAllocator;
+
+/// 把一个虚拟页映射到指定物理页帧。
+///
+/// # Safety
+/// 调用者必须确保：虚拟页当前没有被其他对象使用；
+/// frame 已由调用者独占分配；映射权限符合内核安全策略。
+pub unsafe fn map_4k(
+    mapper: &mut OffsetPageTable<'static>,
+    allocator: &mut FreeListFrameAllocator,
+    virtual_address: VirtAddr,
+    frame: PhysFrame<Size4KiB>,
+) -> Result<(), x86_64::structures::paging::mapper::MapToError<Size4KiB>> {
+    let page = Page::containing_address(virtual_address);
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+
+    let flush = unsafe {
+        mapper.map_to(page, frame, flags, allocator)?
+    };
+
+    // 页表已更新，要求 CPU 使对应的旧地址转换缓存失效。
+    flush.flush();
+
+    Ok(())
+}
+\`\`\`
+
+### 为什么 map_to 需要 FrameAllocator 参数？
+
+如果目标虚拟地址所在的页表分支还没有创建，Mapper 需要额外分配中间页表页。四级分页最坏情况下需要新建 PDPT、PD 和 PT 三张表，因此文档说明最多可能额外分配三个 4 KiB 页帧。传入的 allocator 为这些页表页提供物理内存。
+
+这也说明：映射一个数据页，不一定只消耗一个物理页帧。
+
+### 代码演示：解除映射，但暂不释放物理页帧
+
+\`\`\`rust
+use x86_64::structures::paging::{
+    Mapper, OffsetPageTable, Page, PhysFrame, Size4KiB,
+};
+use x86_64::VirtAddr;
+
+pub fn unmap_4k(
+    mapper: &mut OffsetPageTable<'static>,
+    virtual_address: VirtAddr,
+) -> Result<PhysFrame<Size4KiB>, x86_64::structures::paging::mapper::UnmapError> {
+    let page = Page::containing_address(virtual_address);
+
+    let (frame, flush) = mapper.unmap(page)?;
+    flush.flush();
+
+    // 返回物理页帧，由更上层根据所有权决定是否释放。
+    Ok(frame)
+}
+\`\`\`
+
+\`unmap\` 只移除映射并返回原物理页帧；它不会自动释放数据页帧，也不会自动释放所有变空的中间页表页。拿到返回值后，只有确认该帧不再被其他虚拟地址或进程共享，才可以调用页帧分配器的 unsafe 回收接口。
+
+### 这段代码中的 unsafe 代表什么
+
+\`map_to\` 是 unsafe API，因为错误映射可能让两个逻辑对象别名到同一块可变物理内存，或让正在使用的虚拟页突然指向另一块物理内存。它不是“调用了 unsafe 就安全”，而是要求调用者先证明映射关系不会破坏内存安全。
+
+### 建议的调试输出
+
+映射成功后记录：
+
+- 虚拟页起始地址；
+- 物理页帧起始地址；
+- PageTableFlags；
+- flush 前后的访问结果。
+
+映射失败时区分 \`PageAlreadyMapped\` 和 \`FrameAllocationFailed\` 等错误。不要把所有错误都归类成“内存不足”。

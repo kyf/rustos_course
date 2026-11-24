@@ -1,18 +1,20 @@
-name: mdBook
+name: mdBook and Rust labs
 
 on:
   push:
     branches: [main, master]
     paths:
       - "book/**"
+      - "labs/**"
       - ".github/workflows/mdbook.yml"
   pull_request:
     paths:
       - "book/**"
+      - "labs/**"
       - ".github/workflows/mdbook.yml"
 
 jobs:
-  build:
+  build-book:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,3 +23,18 @@ jobs:
           mdbook-version: "latest"
       - name: Build book
         run: mdbook build book
+
+  check-rust-labs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust and bare-metal target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add x86_64-unknown-none --toolchain stable
+      - name: Test Bitmap + First Fit allocator
+        run: cargo +stable test --manifest-path labs/11-bitmap-allocator/Cargo.toml
+      - name: Check minimal kernel entry
+        run: cargo +stable check --manifest-path labs/03-kernel-entry/Cargo.toml --target x86_64-unknown-none
+      - name: Check kernel memory modules
+        run: cargo +stable check --manifest-path labs/kernel-memory/Cargo.toml --target x86_64-unknown-none

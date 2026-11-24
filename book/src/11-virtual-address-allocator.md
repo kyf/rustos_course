@@ -89,3 +89,150 @@ First Fit 从管理范围起点开始扫描，找到第一个满足长度和对�
 在启用 4 级分页、使用 48 位线性地址的常见 x86_64 配置中，合法地址的 bit 63..48 必须等于 bit 47 的符号扩展值。若地址不符合 canonical 规则，CPU 通常在地址转换之前就拒绝该地址；普通内存操作一般触发 `#GP`，涉及栈段的特定访问可能触发 `#SS`，而不是因为页表没有映射就触发普通 Page Fault。
 
 若启用 LA57（5 级分页），canonical 地址规则改为基于 57 位线性地址。虚拟地址分配器必须依据实际 CPU 分页模式和内核布局选择合法范围。
+
+
+## 代码演示：Bitmap + First Fit
+
+**来源标记：按历史第 11 课实现思路重构。** 历史课程明确讨论过 Bitmap、First Fit、连续虚拟页分配、释放，以及 bool 数组和 bitset 的空间差异。下面给出一份可单独测试的实现；实际内核还要把返回的页索引转换为当前 AddressSpace 中的虚拟地址。
+
+\`\`\`rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FreeError {
+    InvalidRange,
+    DoubleFree,
+}
+
+pub struct BitmapAllocator<'a> {
+    words: &'a mut [u64],
+    page_count: usize,
+}
+
+impl<'a> BitmapAllocator<'a> {
+    /// words 必须至少有 ceil(page_count / 64) 个 u64。
+    /// 构造时清零，表示所有受管理页面最初都是空闲的。
+    pub fn new(words: &'a mut [u64], page_count: usize) -> Option<Self> {
+        let required_words = page_count.checked_add(63)? / 64;
+        if words.len() < required_words {
+            return None;
+        }
+
+        words.fill(0);
+        Some(Self { words, page_count })
+    }
+
+    fn is_used(&self, page: usize) -> bool {
+        let word = page / 64;
+        let bit = page % 64;
+        (self.words[word] & (1u64 << bit)) != 0
+    }
+
+    fn set_used(&mut self, page: usize, used: bool) {
+        let word = page / 64;
+        let bit = page % 64;
+        let mask = 1u64 << bit;
+
+        if used {
+            self.words[word] |= mask;
+        } else {
+            self.words[word] &= !mask;
+        }
+    }
+
+    /// 从低页号开始查找第一个满足数量和对齐要求的连续区间。
+    /// 返回起始页索引，而不是虚拟地址。
+    pub fn allocate_first_fit(
+        &mut self,
+        count: usize,
+        align_pages: usize,
+    ) -> Option<usize> {
+        if count == 0 || align_pages == 0 || count > self.page_count {
+            return None;
+        }
+
+        let last_start = self.page_count - count;
+
+        for start in 0..=last_start {
+            if start % align_pages != 0 {
+                continue;
+            }
+
+            let end = start + count;
+            let range_is_free = (start..end).all(|page| !self.is_used(page));
+
+            if range_is_free {
+                for page in start..end {
+                    self.set_used(page, true);
+                }
+                return Some(start);
+            }
+        }
+
+        None
+    }
+
+    /// 标记一段预留区间为已占用，例如内核映像或保护页。
+    pub fn reserve(&mut self, start: usize, count: usize) -> Result<(), FreeError> {
+        let end = start.checked_add(count).ok_or(FreeError::InvalidRange)?;
+        if count == 0 || end > self.page_count {
+            return Err(FreeError::InvalidRange);
+        }
+
+        if (start..end).any(|page| self.is_used(page)) {
+            return Err(FreeError::InvalidRange);
+        }
+
+        for page in start..end {
+            self.set_used(page, true);
+        }
+        Ok(())
+    }
+
+    pub fn deallocate(
+        &mut self,
+        start: usize,
+        count: usize,
+    ) -> Result<(), FreeError> {
+        let end = start.checked_add(count).ok_or(FreeError::InvalidRange)?;
+        if count == 0 || end > self.page_count {
+            return Err(FreeError::InvalidRange);
+        }
+
+        // 先完整检查，再修改，避免只释放一半后才发现 double free。
+        if (start..end).any(|page| !self.is_used(page)) {
+            return Err(FreeError::DoubleFree);
+        }
+
+        for page in start..end {
+            self.set_used(page, false);
+        }
+        Ok(())
+    }
+}
+\`\`\`
+
+### 逐段讲解
+
+- 一个 bit 代表一个虚拟页是否已被占用；bit 为 1 表示占用，0 表示空闲。
+- \`page / 64\` 找到 bit 所在的 u64；\`page % 64\` 找到这个 u64 中的 bit 位。
+- First Fit 从低页号开始扫描，找到第一段长度满足 \`count\` 且起点满足 \`align_pages\` 的连续空闲区间。
+- \`reserve\` 用于把内核映像、保护页或其他已占用虚拟区间标记为不可分配。
+- \`deallocate\` 先检查整段区间确实全部已占用，再一次性清零，避免发生部分释放。
+
+### 课堂中的空间计算
+
+管理 4096 个页面时：
+
+- \`[bool; 4096]\` 通常占 4096 bytes。
+- bitset 只需 4096 bits，也就是 512 bytes。
+
+所以 bitset 可以把这部分状态元数据减少到原来的八分之一。若 Bitmap 是局部变量，它通常进入当前函数栈帧；若作为分配器字段，则存放位置由分配器实例的存放位置决定。
+
+### 如何运行真实测试
+
+可在仓库中执行：
+
+\`\`\`bash
+cargo test --manifest-path labs/11-bitmap-allocator/Cargo.toml
+\`\`\`
+
+该实验只验证虚拟页区间分配算法，不会修改真实 CPU 页表，也不会分配物理页帧。它与物理页帧分配器、Mapper 是三个不同层次。

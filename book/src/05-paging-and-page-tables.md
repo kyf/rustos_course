@@ -141,3 +141,96 @@ let target_virtual_addr = VirtAddr::new((free_p4_index as u64) << 39);
 这是检查当前 CPU 正在使用的页表，不是读取某个抽象的“BootInfo 页表”。如果内核已经切换过 CR3，读到的就是切换后的根页表。直接解引用页表内存涉及裸指针和别名安全，必须保证地址映射正确且访问期间没有并发修改。
 
 以 `x86_64` crate 为例，`PageTable` 是页表内存本身的结构化视图；`OffsetPageTable` 则是使用物理内存偏移来访问和修改页表的 Mapper 抽象。前者不是后者的“底层页表版本”——二者处于不同抽象层。
+
+
+## 代码演示：读取 CR3 并取得当前 PML4
+
+**来源标记：按历史课堂中“查看 Bootloader 建立的页表”的讨论重构。** 使用下面的代码之前，必须已经启用物理内存直接映射，并确认偏移值正确。
+
+\`\`\`rust
+use x86_64::{
+    registers::control::Cr3,
+    structures::paging::{OffsetPageTable, PageTable},
+    VirtAddr,
+};
+
+/// 读取当前 CPU 正在使用的 PML4。
+///
+/// # Safety
+/// - physical_memory_offset 必须对应完整、正确的物理内存直接映射；
+/// - 当前 CR3 必须指向有效的四级页表；
+/// - 调用者必须保证不会同时创建另一个可变 PageTable 引用。
+unsafe fn active_level_4_table(
+    physical_memory_offset: VirtAddr,
+) -> &'static mut PageTable {
+    let (level_4_frame, _flags) = Cr3::read();
+    let physical_address = level_4_frame.start_address();
+    let virtual_address =
+        physical_memory_offset + physical_address.as_u64();
+
+    // SAFETY: 由函数调用者保证偏移、页表根地址和独占访问条件。
+    unsafe { &mut *virtual_address.as_mut_ptr::<PageTable>() }
+}
+
+/// 创建一个使用物理内存直接映射偏移的 Mapper。
+///
+/// # Safety
+/// 只能在当前页表根和物理内存映射满足 active_level_4_table 的契约时调用。
+unsafe fn init_offset_page_table(
+    physical_memory_offset: VirtAddr,
+) -> OffsetPageTable<'static> {
+    let level_4_table =
+        unsafe { active_level_4_table(physical_memory_offset) };
+
+    // SAFETY: level_4_table 是当前有效 PML4，offset 是正确的直接映射偏移。
+    unsafe { OffsetPageTable::new(level_4_table, physical_memory_offset) }
+}
+\`\`\`
+
+### 逐步理解
+
+1. \`Cr3::read()\` 返回当前 PML4 的物理页帧和 CR3 标志位。CR3 中存放的是物理页表根，不是 Rust 虚拟指针。
+2. \`start_address()\` 取得 PML4 页帧的物理起始地址。
+3. \`physical_memory_offset + physical_address\` 通过 Bootloader 建立的直接映射找到同一块页表内存的虚拟地址。
+4. \`as_mut_ptr::<PageTable>()\` 只是把数值解释为指针，并不负责创建映射。
+5. \`OffsetPageTable::new\` 创建的是内核侧 Mapper 抽象；硬件页表格式没有因为创建这个 Rust 对象而改变。
+
+\`'static mut\` 在这里是教学内核常见的简化方式，但它要求非常严格：不能反复调用函数制造多个指向同一 PML4 的可变引用。正式内核应由内存管理器统一持有 Mapper，并通过受控借用暴露操作接口。
+
+## 代码演示：从虚拟地址拆出四级页表索引
+
+\`\`\`rust
+use x86_64::VirtAddr;
+
+fn dump_page_table_indexes(raw: u64) {
+    let address = VirtAddr::try_new(raw).expect("non-canonical address");
+
+    let p4 = u16::from(address.p4_index());
+    let p3 = u16::from(address.p3_index());
+    let p2 = u16::from(address.p2_index());
+    let p1 = u16::from(address.p1_index());
+    let offset = u16::from(address.page_offset());
+
+    // 在内核中把这些值输出到串口。
+    let _ = (p4, p3, p2, p1, offset);
+}
+\`\`\`
+
+以 4 KiB 页面为例，低 12 bit 是页内偏移；之后每 9 bit 分别是 PT、PD、PDPT、PML4 索引。索引范围都是 0 到 511。这个拆分解释了为什么页表每一级有 512 个 Entry。
+
+## 代码演示：PML4 Entry 对应的 512 GiB 区域起点
+
+\`\`\`rust
+use x86_64::VirtAddr;
+
+fn pml4_slot_start(index: u16) -> Option<VirtAddr> {
+    if index >= 512 {
+        return None;
+    }
+
+    let raw = (index as u64) << 39;
+    VirtAddr::try_new(raw).ok()
+}
+\`\`\`
+
+例如 index 为 5 时，左移 39 位得到该 PML4 槽位覆盖区域的低半区起点。注意：高半区槽位需要正确符号扩展，不能把简单左移结果无条件当成 canonical 地址。

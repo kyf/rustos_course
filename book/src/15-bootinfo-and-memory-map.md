@@ -71,3 +71,55 @@ VA = physical_memory_offset + P
 ## 本课结论
 
 BootInfo 帮助内核理解启动环境；MemoryRegion 帮助内核判断哪些物理范围可以使用；直接映射让内核能按规则访问部分物理内存；物理页帧分配和虚拟映射仍然是不同职责。
+
+
+## 代码演示：逐项读取 BootInfo 内存地图
+
+**来源标记：新增补充示例，类型与字段对应 bootloader_api 0.11.17。**
+
+\`\`\`rust
+use bootloader_api::{
+    info::{MemoryRegion, MemoryRegionKind, Optional},
+    BootInfo,
+};
+use x86_64::VirtAddr;
+
+fn region_name(region: &MemoryRegion) -> &'static str {
+    match region.kind {
+        MemoryRegionKind::Usable => "Usable",
+        MemoryRegionKind::Bootloader => "Bootloader",
+        MemoryRegionKind::UnknownBios(_) => "UnknownBios",
+        MemoryRegionKind::UnknownUefi(_) => "UnknownUefi",
+        _ => "Other",
+    }
+}
+
+fn inspect_boot_info(boot_info: &BootInfo) {
+    for region in boot_info.memory_regions.iter() {
+        let start = region.start;
+        let end = region.end; // end 是 exclusive
+        let length = end.saturating_sub(start);
+        let kind = region_name(region);
+
+        // 在内核中把 start/end/length/kind 输出到串口。
+        let _record = (start, end, length, kind);
+    }
+}
+
+fn get_physical_memory_offset(boot_info: &BootInfo) -> Option<VirtAddr> {
+    match boot_info.physical_memory_offset {
+        Optional::Some(offset) => VirtAddr::try_new(offset).ok(),
+        Optional::None => None,
+    }
+}
+\`\`\`
+
+### 为什么只把 Usable 放进分配器
+
+Bootloader API 对内存地图的定义很明确：只有 \`Usable\` 区域可以自由交给内核使用；\`Bootloader\` 区域包含 Bootloader 使用的映射、页表和 BootInfo 等内容，不能当成空闲内存。Unknown 类型也不能仅因为它的起始地址位于 RAM 附近就被分配。
+
+### 为什么所有 MemoryRegion 的 size 相加可能大于 QEMU -m
+
+\`-m 512M\` 表示配置的 RAM 容量；MemoryRegion 还可能描述高地址固件保留区或设备映射区。它们是物理地址空间地图的一部分，不代表都是真实 RAM。应按 kind 分类，并只统计协议允许分配的 Usable 区域。
+
+\`UnknownBios(u32)\` 的参数是固件 E820 类型值；\`UnknownUefi(u32)\` 的参数是 UEFI 内存类型值。不要把这个参数误认为内存大小。

@@ -32,9 +32,17 @@ mdbook serve book --open
 - [x] 页表映射/撤销、TLB 与资源回收
 - [x] 虚拟地址分配、Bitmap 与 First Fit
 - [x] 进程/线程、栈与独立地址空间的原理和初步设计
+- [ ] 第 9 课映射/回收整合实验（历史上明确暂缓，等待统一 MemoryManager）
 - [ ] Ring 3 实际切换、系统调用实现与用户程序运行
 - [ ] 中断控制、抢占式调度与多核同步
 - [ ] 驱动、文件系统与 Shell
+
+## 代码实验
+
+- 最小内核入口：`labs/03-kernel-entry/`
+- Free List / Mapper 模块：`labs/kernel-memory/`
+- Bitmap + First Fit 单元测试：`labs/11-bitmap-allocator/`
+- 运行命令和代码来源标记见 [代码状态附录](book/src/appendix/code-status.md)。
 
 ## 课程约定
 

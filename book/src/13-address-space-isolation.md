@@ -107,3 +107,132 @@ Process B @ 0x4000_0000 -> 200
 ## 本课结论
 
 独立地址空间的关键不是“每个进程有一份不同的页表内存”这么简单，而是为每个进程维护独立的用户映射，同时保证必要的内核映射在切换前后始终有效，并正确管理共享资源的权限与生命周期。
+
+
+## 代码演示：创建一个新的 PML4 根，并共享内核映射
+
+**来源标记：历史第 13 课的目标和步骤已确认；下面代码是根据该方案重建的教学骨架，不是声称找回了历史逐字代码。** 在实际内核中，必须先核对内核链接地址、Bootloader 页表布局和内核映射范围。
+
+\`\`\`rust
+use x86_64::{
+    PhysAddr,
+    VirtAddr,
+    registers::control::Cr3,
+    structures::paging::{
+        FrameAllocator,
+        PageTable,
+        PhysFrame,
+        Size4KiB,
+    },
+};
+
+pub struct AddressSpace {
+    pub pml4_frame: PhysFrame<Size4KiB>,
+}
+
+/// 创建新的 PML4，并共享当前地址空间中指定范围的内核顶层 Entry。
+///
+/// # Safety
+/// - physical_memory_offset 必须是正确的物理内存直接映射偏移；
+/// - allocator 返回的页帧必须是唯一且空闲的；
+/// - kernel_p4_start 必须由真实内核虚拟内存布局确定；
+/// - 共享的内核页表树在所有 AddressSpace 生命周期内必须保持有效。
+pub unsafe fn create_address_space<A>(
+    physical_memory_offset: VirtAddr,
+    allocator: &mut A,
+    kernel_p4_start: usize,
+) -> Option<AddressSpace>
+where
+    A: FrameAllocator<Size4KiB>,
+{
+    assert!(kernel_p4_start < 512);
+
+    // 1. 读取当前 CPU 的页表根。
+    let (current_p4_frame, _) = Cr3::read();
+
+    // 2. 通过直接映射访问当前 PML4。
+    let current_p4_address =
+        physical_memory_offset + current_p4_frame.start_address().as_u64();
+    let current_p4 =
+        unsafe { &*current_p4_address.as_ptr::<PageTable>() };
+
+    // 3. 分配一个物理页帧作为新 PML4。
+    let new_p4_frame = allocator.allocate_frame()?;
+    let new_p4_address =
+        physical_memory_offset + new_p4_frame.start_address().as_u64();
+    let new_p4 =
+        unsafe { &mut *new_p4_address.as_mut_ptr::<PageTable>() };
+
+    // 4. 清空新页表，防止把未初始化内存当作 Entry。
+    new_p4.zero();
+
+    // 5. 只复制明确属于内核映射的 PML4 Entry。
+    //    这里复制的是下级页表指针，不是递归复制整棵页表树。
+    for index in kernel_p4_start..512 {
+        new_p4[index] = current_p4[index].clone();
+    }
+
+    Some(AddressSpace {
+        pml4_frame: new_p4_frame,
+    })
+}
+\`\`\`
+
+### 这段代码真正做了什么
+
+1. 从 CR3 读取当前 PML4 物理页帧。
+2. 使用物理内存直接映射偏移，得到当前 PML4 的虚拟地址。
+3. 从页帧分配器取得一个新的 4 KiB 页帧。
+4. 将新页帧初始化为全空的 PML4。
+5. 把指定的内核 PML4 Entry 复制到新 PML4 中。
+6. 新 PML4 现在有独立的用户空间顶层表项，但内核区域仍指向原来的下级页表结构。
+
+**复制一个 PML4 Entry 不等于复制整棵页表。** 如果 A 和 B 的顶层 Entry 指向同一个 PDPT，那么后续修改该 PDPT 下的 PTE，A 和 B 都会看到变化。这是共享页表结构的结果。
+
+### 为什么不能把 256 写死后就认为所有内核都适用
+
+在常见 48 位四级分页中，索引 256–511 是高半区，但具体内核映射布局由链接地址、Bootloader 配置和内核自身决定。应当先遍历当前 PML4，确认哪些 Entry 包含内核代码、内核栈、全局数据、物理内存直接映射和中断相关资源，再确定 \`kernel_p4_start\` 或更精确的复制范围。
+
+### 代码演示：切换 CR3 的最小形式
+
+\`\`\`rust
+use x86_64::registers::control::{Cr3, Cr3Flags};
+use x86_64::structures::paging::{PhysFrame, Size4KiB};
+
+/// # Safety
+/// 新 PML4 必须映射当前指令、当前内核栈、全局数据和必要的设备/中断区域。
+pub unsafe fn switch_address_space(
+    new_root: PhysFrame<Size4KiB>,
+    flags: Cr3Flags,
+) {
+    unsafe { Cr3::write(new_root, flags); }
+}
+\`\`\`
+
+切换 CR3 不是普通的“切换一个变量”。下一条指令取指、当前 RSP 指向的栈访问、全局数据读取都会立即使用新页表。只要新页表缺少其中任何一个必要映射，CPU 就可能马上触发异常。
+
+### 历史课程中的隔离验证目标
+
+\`\`\`text
+Address Space A:
+    0x4000_0000 -> Frame A
+
+Address Space B:
+    0x4000_0000 -> Frame B
+
+A 中写入 100
+B 中写入 200
+
+切回 A，读取 100
+切回 B，读取 200
+\`\`\`
+
+这个实验验证的是 Ring 0 中两套页表根的映射隔离，不等于已经完成 Ring 3 用户程序运行。真实执行前还必须确保：
+
+- 两个数据帧分别由分配器独占分配；
+- 0x4000_0000 在两个地址空间中都映射且权限正确；
+- 当前内核代码、栈和直接映射在两个页表中都可用；
+- 保存旧 CR3 并在测试后恢复；
+- 多核环境下处理其他 CPU 的 TLB Shootdown。
+
+当前课程把它作为地址空间原理实验设计，不将它标记为已经在 QEMU 上完成验证。

@@ -24,3 +24,4 @@
 - [附录：macOS 开发环境](appendix/environment.md)
 - [附录：术语表](appendix/glossary.md)
 - [附录：学习进度与实验状态](appendix/progress-and-labs.md)
+- [附录：代码来源、验证状态与阅读约定](appendix/code-status.md)
