@@ -61,3 +61,74 @@ CR3 是每个逻辑 CPU 上的架构寄存器状态，不是“每个进程有�
 ## 本课结论
 
 进程主要承载资源和地址空间，线程主要承载可调度的执行状态。理解这一区别，才能正确设计调度器和地址空间管理器。
+
+
+## 代码演示：把 Process 和 Thread 的职责落到结构体上
+
+**来源标记：新增补充示例，用来把课堂讨论的资源归属具体化。** 这不是已经实现的完整进程管理器。
+
+\`\`\`rust
+use x86_64::{
+    VirtAddr,
+    structures::paging::{PhysFrame, Size4KiB},
+};
+
+#[derive(Clone, Copy)]
+pub struct StackRegion {
+    /// 栈区域的低地址边界（虚拟地址）。
+    pub bottom: VirtAddr,
+    /// 栈区域的高地址边界（虚拟地址）。
+    pub top: VirtAddr,
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct SavedContext {
+    pub r15: u64,
+    pub r14: u64,
+    pub r13: u64,
+    pub r12: u64,
+    pub rbx: u64,
+    pub rbp: u64,
+    pub rsp: u64,
+    pub rip: u64,
+}
+
+pub struct Thread {
+    pub user_stack: Option<StackRegion>,
+    pub kernel_stack: StackRegion,
+    pub context: SavedContext,
+    pub process_id: u64,
+}
+
+pub struct AddressSpaceRoot {
+    /// CR3 要使用的 PML4 物理页帧。
+    pub pml4_frame: PhysFrame<Size4KiB>,
+}
+
+pub struct Process {
+    pub id: u64,
+    pub address_space: AddressSpaceRoot,
+}
+\`\`\`
+
+### 为什么这么分层
+
+- \`Process\` 持有地址空间根，代表进程的虚拟内存环境。
+- \`Thread\` 持有自己的用户栈、内核栈和可恢复执行上下文。
+- 同一个进程中的两个线程可以共享同一个 \`AddressSpaceRoot\`，但不能共享同一个执行栈。
+- 两个进程通常持有不同的 PML4 根，所以在同一个逻辑 CPU 上切换进程时，通常需要切换 CR3。
+
+### 为什么切换同进程线程时通常不切换 CR3
+
+同一进程的线程共享同一套页表映射。切换线程时，核心工作是保存当前线程的寄存器/栈状态，并恢复目标线程的寄存器/栈状态。由于地址空间没变，通常不需要切换 CR3。
+
+切换到另一个进程时，除了恢复目标线程上下文，还要让当前逻辑 CPU 使用目标进程的页表根。
+
+### 用户栈和内核栈分别何时使用
+
+- 线程在 Ring 3 执行普通函数时使用用户栈。
+- 线程通过中断、异常或系统调用进入内核时，内核必须切换到该线程自己的内核栈。
+- 内核栈由内核分配、映射和回收；用户态不能直接访问它。
+
+这里的结构体只定义了资源模型。真正的上下文切换还需要汇编保存/恢复寄存器、初始化新线程的栈帧，并正确处理中断状态和 ABI。当前 RustOS 尚未完成可抢占调度器。

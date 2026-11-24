@@ -1,0 +1,8 @@
+[package]
+name = "rustos-kernel-memory"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bootloader_api = "=0.11.17"
+x86_64 = { version = "=0.15.5", default-features = false, features = ["instructions"] }

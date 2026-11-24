@@ -65,3 +65,77 @@ RustOS 后续实现 Ring 3 和系统调用时，建议按以下顺序推进：
 ## 本课结论
 
 系统调用是 CPU 提供的受控特权级入口与内核软件协议的组合。硬件负责按配置改变特权级和控制流，内核负责保存上下文、切换安全栈、验证参数、执行服务并安全返回。
+
+
+## 代码演示：系统调用分发器的 Rust 侧形状
+
+**来源标记：新增补充示例。** 下面只展示内核拿到系统调用号和参数后的分发层，不包含尚未实现的汇编入口、MSR 初始化、用户栈切换和返回路径。
+
+\`\`\`rust
+#[derive(Debug, Clone, Copy)]
+pub enum SyscallError {
+    UnknownSyscall,
+    InvalidUserPointer,
+    PermissionDenied,
+}
+
+const SYS_EXIT: u64 = 0;
+const SYS_WRITE: u64 = 1;
+
+pub fn dispatch_syscall(
+    number: u64,
+    args: [u64; 6],
+) -> Result<u64, SyscallError> {
+    match number {
+        SYS_EXIT => {
+            let exit_code = args[0];
+            sys_exit(exit_code)
+        }
+        SYS_WRITE => {
+            let user_pointer = args[0];
+            let length = args[1];
+            sys_write(user_pointer, length)
+        }
+        _ => Err(SyscallError::UnknownSyscall),
+    }
+}
+
+fn sys_exit(_code: u64) -> Result<u64, SyscallError> {
+    // 后续由线程管理器把当前线程标记为退出。
+    // 当前课程尚未实现完整线程生命周期。
+    Ok(0)
+}
+
+fn sys_write(
+    _user_pointer: u64,
+    _length: u64,
+) -> Result<u64, SyscallError> {
+    // 不能直接把用户传入的整数当作内核指针解引用。
+    // 后续需要验证用户地址范围并执行 copy_from_user。
+    Err(SyscallError::InvalidUserPointer)
+}
+\`\`\`
+
+### 为什么 sys_write 不能直接解引用参数
+
+用户传入的指针属于当前进程的用户虚拟地址空间。内核必须验证地址范围、长度加法是否溢出、页是否映射、权限是否允许，并防止并发撤销映射。正确的实现通常先把用户数据安全复制到内核缓冲区，再交给设备或文件系统处理。
+
+### 硬件入口与 Rust 分发层的边界
+
+\`\`\`text
+Ring 3 执行 syscall
+    |
+CPU 根据 IA32_LSTAR 等配置进入 Ring 0
+    |
+汇编入口保存寄存器、切换到线程内核栈
+    |
+构造 syscall frame
+    |
+dispatch_syscall(number, args)
+    |
+执行服务并准备返回值
+    |
+汇编恢复用户上下文并返回 Ring 3
+\`\`\`
+
+\`SYSCALL\` 会把用户返回 RIP 保存到 RCX，把用户 RFLAGS 保存到 R11；它不会自动保存所有通用寄存器，也不会自动把 RSP 切换到内核栈。当前 RustOS 还没有实现这条完整路径，所以本节分发器是接口设计示例，不是可从 Ring 3 调用的现成功能。

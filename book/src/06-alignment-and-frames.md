@@ -85,3 +85,85 @@ end   = 0x5005
 ## 本课结论
 
 对齐计算必须结合区间语义。页帧是物理内存管理的基本单位，而 Page 是虚拟内存映射的基本单位；二者通过页表建立关系。
+
+
+## 代码演示：安全地实现 align_up / align_down
+
+**来源标记：按历史课程中的对齐练习重构，并补充溢出检查。**
+
+\`\`\`rust
+const PAGE_SIZE: u64 = 4096;
+
+fn align_down(value: u64, alignment: u64) -> Option<u64> {
+    if alignment == 0 || !alignment.is_power_of_two() {
+        return None;
+    }
+
+    Some(value & !(alignment - 1))
+}
+
+fn align_up(value: u64, alignment: u64) -> Option<u64> {
+    if alignment == 0 || !alignment.is_power_of_two() {
+        return None;
+    }
+
+    let adjusted = value.checked_add(alignment - 1)?;
+    Some(adjusted & !(alignment - 1))
+}
+
+fn covered_page_count(start: u64, end: u64) -> Option<u64> {
+    if start >= end {
+        return Some(0);
+    }
+
+    let first = align_down(start, PAGE_SIZE)?;
+    let limit = align_up(end, PAGE_SIZE)?;
+    Some((limit - first) / PAGE_SIZE)
+}
+\`\`\`
+
+### 用课堂练习数据验证
+
+区间采用半开区间 \`[start, end)\`：
+
+\`\`\`text
+start = 0x1003
+end   = 0x5005
+
+覆盖整个区间：
+    align_down(start) = 0x1000
+    align_up(end)     = 0x6000
+    (0x6000 - 0x1000) / 0x1000 = 5 页
+
+只计算完全位于原区间内部的整页：
+    align_up(start)   = 0x2000
+    align_down(end)   = 0x5000
+    (0x5000 - 0x2000) / 0x1000 = 3 页
+\`\`\`
+
+之前练习中的 \`0x2000\` 和 \`0x5000\` 计算的是“完全包含在区间内部的整页”，不是“覆盖整个区间所需的页”。这两个问题使用不同的对齐方向。
+
+### 用 x86_64 crate 表示页和页帧
+
+\`\`\`rust
+use x86_64::{
+    PhysAddr,
+    VirtAddr,
+    structures::paging::{Page, PhysFrame, Size4KiB},
+};
+
+fn make_page_and_frame(
+    virtual_address: u64,
+    physical_address: u64,
+) -> Result<(Page<Size4KiB>, PhysFrame<Size4KiB>), ()> {
+    let virtual_address = VirtAddr::try_new(virtual_address).map_err(|_| ())?;
+    let physical_address = PhysAddr::try_new(physical_address).map_err(|_| ())?;
+
+    let page = Page::from_start_address(virtual_address).map_err(|_| ())?;
+    let frame = PhysFrame::from_start_address(physical_address).map_err(|_| ())?;
+
+    Ok((page, frame))
+}
+\`\`\`
+
+这里使用 \`from_start_address\`，因此传入的地址必须已经按 4 KiB 对齐。若手里拿到的是任意字节地址，应先用 \`Page::containing_address\` 或显式对齐，而不是假装它已经是页起点。
