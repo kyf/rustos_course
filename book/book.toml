@@ -1,0 +1,16 @@
+[book]
+title = "RustOS：从零理解操作系统"
+description = "使用 Rust、x86_64、no_std 和 QEMU 学习操作系统原理并实现教学内核"
+authors = ["kyf"]
+language = "zh-CN"
+multilingual = false
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/kyf/rustos_course"
+edit-url-template = "https://github.com/kyf/rustos_course/edit/main/book/src/{path}"
