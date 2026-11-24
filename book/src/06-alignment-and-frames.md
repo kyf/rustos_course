@@ -91,7 +91,7 @@ end   = 0x5005
 
 **来源标记：按历史课程中的对齐练习重构，并补充溢出检查。**
 
-\`\`\`rust
+```rust
 const PAGE_SIZE: u64 = 4096;
 
 fn align_down(value: u64, alignment: u64) -> Option<u64> {
@@ -120,13 +120,13 @@ fn covered_page_count(start: u64, end: u64) -> Option<u64> {
     let limit = align_up(end, PAGE_SIZE)?;
     Some((limit - first) / PAGE_SIZE)
 }
-\`\`\`
+```
 
 ### 用课堂练习数据验证
 
-区间采用半开区间 \`[start, end)\`：
+区间采用半开区间 `[start, end)`：
 
-\`\`\`text
+```text
 start = 0x1003
 end   = 0x5005
 
@@ -139,13 +139,13 @@ end   = 0x5005
     align_up(start)   = 0x2000
     align_down(end)   = 0x5000
     (0x5000 - 0x2000) / 0x1000 = 3 页
-\`\`\`
+```
 
-之前练习中的 \`0x2000\` 和 \`0x5000\` 计算的是“完全包含在区间内部的整页”，不是“覆盖整个区间所需的页”。这两个问题使用不同的对齐方向。
+之前练习中的 `0x2000` 和 `0x5000` 计算的是“完全包含在区间内部的整页”，不是“覆盖整个区间所需的页”。这两个问题使用不同的对齐方向。
 
 ### 用 x86_64 crate 表示页和页帧
 
-\`\`\`rust
+```rust
 use x86_64::{
     PhysAddr,
     VirtAddr,
@@ -164,6 +164,6 @@ fn make_page_and_frame(
 
     Ok((page, frame))
 }
-\`\`\`
+```
 
-这里使用 \`from_start_address\`，因此传入的地址必须已经按 4 KiB 对齐。若手里拿到的是任意字节地址，应先用 \`Page::containing_address\` 或显式对齐，而不是假装它已经是页起点。
+这里使用 `from_start_address`，因此传入的地址必须已经按 4 KiB 对齐。若手里拿到的是任意字节地址，应先用 `Page::containing_address` 或显式对齐，而不是假装它已经是页起点。
