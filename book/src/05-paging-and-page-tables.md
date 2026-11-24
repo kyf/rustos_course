@@ -91,3 +91,53 @@ virtual = physical_memory_offset + physical
 ## 本课结论
 
 页表是硬件定义的数据结构；`OffsetPageTable` 是内核访问页表的抽象；CR3 告诉 CPU 当前使用哪张根页表。
+
+
+## PML4 索引为什么左移 39 位
+
+四级分页的虚拟地址中，PML4 index 占 bit 47..39，共 9 bit。每个 PML4 Entry 覆盖的虚拟地址范围是：
+
+\[
+2^{9+9+9+9+12}=2^{48}\text{ bytes}
+\]
+
+其中单个 PML4 Entry 覆盖：
+
+\[
+2^{9+9+9+12}=2^{39}\text{ bytes}=512\text{ GiB}
+\]
+
+因此，如果选中 PML4 index 为 5，它对应的 512 GiB 虚拟地址区域起点可以由下式得到：
+
+\[
+5 \ll 39 = 0x0000\_0028\_0000\_0000
+\]
+
+这行代码：
+
+```rust
+let target_virtual_addr = VirtAddr::new((free_p4_index as u64) << 39);
+```
+
+是在构造该 PML4 槽位所覆盖虚拟区域的起始地址。它**不是**从 PML4 数组中取出下级页表地址，也不是把页表项里的物理地址转换成虚拟地址。
+
+需要区分两件事：
+
+- PML4 的一个已使用 Entry 中，存放的是下一级页表（通常是 PDPT）的物理地址和标志。
+- 一个空闲 PML4 Entry 没有下级表指针。将它的索引左移 39 位，是为了构造落在该槽位覆盖范围内的虚拟地址。
+
+对于高半区索引，还必须按 48 位 canonical address 规则进行符号扩展；不能把简单左移结果无条件当成合法的高半区虚拟地址。
+
+## 如何观察 Bootloader 当前建立的页表
+
+一个常见的检查思路是：
+
+1. 在当前逻辑 CPU 上读取 CR3，得到当前 PML4 根页帧的物理地址。
+2. 确认 Bootloader 建立的物理内存直接映射覆盖这个页帧。
+3. 使用 `physical_memory_offset + pml4_physical_address` 得到可访问的虚拟地址。
+4. 在 `unsafe` 代码中把该虚拟地址视为 `PageTable`，读取其 Entry。
+5. 继续沿 Present Entry 指向的下级表遍历，打印各级索引、物理地址和 Flags。
+
+这是检查当前 CPU 正在使用的页表，不是读取某个抽象的“BootInfo 页表”。如果内核已经切换过 CR3，读到的就是切换后的根页表。直接解引用页表内存涉及裸指针和别名安全，必须保证地址映射正确且访问期间没有并发修改。
+
+以 `x86_64` crate 为例，`PageTable` 是页表内存本身的结构化视图；`OffsetPageTable` 则是使用物理内存偏移来访问和修改页表的 Mapper 抽象。前者不是后者的“底层页表版本”——二者处于不同抽象层。
