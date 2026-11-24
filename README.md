@@ -50,3 +50,13 @@ mdbook serve book --open
 - 区分硬件机制、内核策略和 Rust API。
 - 每章标注“已讨论”“已实验”或“待实现”，避免混淆学习进度。
 - 代码示意不等于可直接运行的完整内核代码；具体 API 以仓库锁定的 crate 版本为准。
+
+## 文档贡献与格式规范
+
+新增或修改教材时，遵守 [CONTRIBUTING.md](CONTRIBUTING.md)：Rust 多行代码使用标准代码围栏，正文中的泛型类型和带尖括号的路径占位符使用行内代码。提交前执行：
+
+```bash
+./scripts/check-book.sh
+```
+
+该脚本构建 mdBook，并在出现未闭合 HTML 标签解析警告时失败；GitHub Actions 也会执行同一检查。

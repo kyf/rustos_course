@@ -6,11 +6,17 @@ on:
     paths:
       - "book/**"
       - "labs/**"
+      - "scripts/**"
+      - "CONTRIBUTING.md"
+      - "README.md"
       - ".github/workflows/mdbook.yml"
   pull_request:
     paths:
       - "book/**"
       - "labs/**"
+      - "scripts/**"
+      - "CONTRIBUTING.md"
+      - "README.md"
       - ".github/workflows/mdbook.yml"
 
 jobs:
@@ -21,8 +27,8 @@ jobs:
       - uses: peaceiris/actions-mdbook@v2
         with:
           mdbook-version: "latest"
-      - name: Build book
-        run: mdbook build book
+      - name: Build book and reject HTML parsing warnings
+        run: bash scripts/check-book.sh
 
   check-rust-labs:
     runs-on: ubuntu-latest
